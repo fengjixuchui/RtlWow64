@@ -2,24 +2,54 @@
 #include "../RtlWow64/RtlNative.h"
 #include <cstdio>
 
-PVOID64 WINAPI LdrLoadDll64(LPCWSTR lpModuleName) {
-	PVOID64 hModule;
-	PVOID64 LdrLoadDll;
-	NTSTATUS status = RtlGetModuleHandleWow64(&hModule, "ntdll.dll");
-	RtlGetProcAddressWow64(&LdrLoadDll, hModule, "LdrLoadDll");
+extern "C" {
+    NTSYSCALLAPI
+    NTSTATUS
+    NTAPI
+    NtQueryInformationProcess(
+        _In_ HANDLE ProcessHandle,
+        _In_ PROCESSINFOCLASS ProcessInformationClass,
+        _Out_writes_bytes_(ProcessInformationLength) PVOID ProcessInformation,
+        _In_ ULONG ProcessInformationLength,
+        _Out_opt_ PULONG ReturnLength
+    );
+}
 
-	PVOID64 module = nullptr;
-	UNICODE_STRING64 str;
-	ULONG64 p[5] = { ULONG64(L"C:\\Windows\\System32"),0,ULONG64(&str),ULONG64(&module) };
-	RtlInitUnicodeString64(&str, lpModuleName);
+BOOL CheckDebuggerNormal() {
+    PVOID ptr = nullptr;
+    NTSTATUS status = NtQueryInformationProcess(
+        HANDLE(-1),
+        PROCESSINFOCLASS::ProcessDebugPort,
+        &ptr,
+        sizeof(ptr),
+        nullptr
+    );
 
-	RtlInvokeX64(&p[4], LdrLoadDll, &p[0], 4);
-	return module;
+    return !(NT_SUCCESS(status) && ULONG(ptr) != -1);
+}
+
+BOOL CheckDebuggerWow64() {
+    ULONG64 p[6]{ -1,ULONG64(PROCESSINFOCLASS::ProcessDebugPort),ULONG64(&p[5]),sizeof(p[5]),0 };
+    PVOID64 _NtQueryInformationProcess;
+    NTSTATUS status = RtlGetNativeProcAddressWow64(
+        &_NtQueryInformationProcess,
+        "NtQueryInformationProcess"
+    );
+    BOOL result = TRUE;
+
+    if (NT_SUCCESS(status)) {
+        status = RtlInvokeX64(nullptr, _NtQueryInformationProcess, &p[0], 5);
+        result = !(NT_SUCCESS(status) && p[5] != -1);
+    }
+
+    return result;
 }
 
 int main() {
-	auto hModule = LdrLoadDll64(L"kernel32.dll");
-	printf("%llx\n", ULONG64(hModule));
-
+    printf("CheckDebugger:\n\tNormal:\t%s\n\tWow64:\t%s\n",
+        CheckDebuggerNormal() ? "Debugger found" : "No debugger found",
+        CheckDebuggerWow64() ? "Debugger found" : "No debugger found"
+    );
+	
 	return 0;
 }
